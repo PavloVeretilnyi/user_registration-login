@@ -2,17 +2,31 @@
 const mongoose = require('mongoose');            // MongoDB ODM library
 const Customers = require('./customer');         // Imported MongoDB model for 'customers'
 const express = require('express');              // Express.js web framework
+const session = require('express-session');
 const bodyParser = require('body-parser');       // Middleware for parsing JSON requests
 const path = require('path');                    // Node.js path module for working with file and directory paths
+const bcrypt = require("bcrypt")
+const saltRounds = 5
+const password = "admin"
 
 // Creating an instance of the Express application
 const app = express();
+
+const uuid = require('uuid'); //to generate a unique session id
+
+app.use(session({
+    cookie: { maxAge: 120000 },
+    secret: 'itsmysecret',
+    resave: false,
+    saveUninitialized: false,
+    genid: () => uuid.v4()
+  }));
 
 // Setting the port number for the server
 const port = 3000;
 
 // MongoDB connection URI and database name
-const uri =  "mongodb://root:your_password@localhost:27017";
+const uri =  "mongodb://root:cIXPhADc7ySVVffBqvqALcx9@172.21.50.157:27017";
 mongoose.connect(uri, {'dbName': 'customerDB'});
 
 // Middleware to parse JSON requests
@@ -32,14 +46,34 @@ app.post('/api/login', async (req, res) => {
     let password = data['password'];
 
     // Querying the MongoDB 'customers' collection for matching user_name and password
-    const documents = await Customers.find({ user_name: user_name, password: password });
+    const user = await Customers.findOne({ user_name });
 
     // If a matching user is found, set the session username and serve the home page
-    if (documents.length > 0) {
-        res.send("User Logged In");
+    
+    if (!user) {
+        return res.send("User not found");
+      }
+      const match = await bcrypt.compare(password, user.password);
+      if (match) {
+        const genidValue = req.sessionID;
+        res.cookie('username', user_name);
+        res.sendFile(path.join(__dirname, 'frontend', 'home.html')); 
+      } else {
+        res.send("Password incorrect");
+      }
+      //old logic
+    /*if (documents.length > 0) {
+        let result = await bcrypt.compare(password, documents[0]['password'])
+        if(result) {
+            const genidValue = req.sessionID;
+            res.cookie('username', user_name);
+            res.sendFile(path.join(__dirname, 'frontend', 'home.html'));        
+        } else {
+            res.send("Password Incorrect! Try again");
+        }
     } else {
         res.send("User Information incorrect");
-    }
+    }*/
 });
 
 // POST endpoint for adding a new customer
@@ -51,12 +85,14 @@ app.post('/api/add_customer', async (req, res) => {
         res.send("User already exists");
     }
     
+    let hashedpwd = bcrypt.hashSync(data['password'], saltRounds)
+
     // Creating a new instance of the Customers model with data from the request
     const customer = new Customers({
-        "user_name": data['user_name'],
-        "age": data['age'],
-        "password": data['password'],
-        "email": data['email']
+        user_name: data['user_name'],
+        age: data['age'],
+        password: hashedpwd,
+        email: data['email']
     });
 
     // Saving the new customer to the MongoDB 'customers' collection
@@ -68,6 +104,18 @@ app.post('/api/add_customer', async (req, res) => {
 // GET endpoint for the root URL, serving the home page
 app.get('/', async (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend', 'home.html'));
+});
+
+// GET endpoint for user logout
+app.get('/api/logout', async (req, res) => {
+    req.session.destroy((err) => {
+        if (err) {
+          console.error(err);
+        } else {
+          res.cookie('username', '', { expires: new Date(0) });
+          res.redirect('/');
+        }
+      });
 });
 
 // Starting the server and listening on the specified port
